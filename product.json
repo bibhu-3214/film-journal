@@ -3,13 +3,11 @@
   "kind": "movie",
   "title": "Film Journal",
   "tagline": "Your taste. Your next great watch.",
-  "description": "Keep a personal collection, plan what to watch and remember what made a film worth it.",
+  "description": "Build a personal film collection, keep a watchlist and record your own ratings and reviews.",
   "eyebrow": "YOUR FILM JOURNAL",
   "collection": "Movies",
   "webPort": 5184,
   "apiPort": 8104,
   "storageNamespace": "movies",
-  "legacyProductIds": [
-    "movies"
-  ]
+  "legacyProductIds": ["movies"]
 }

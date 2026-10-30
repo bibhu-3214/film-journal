@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import product from "../product.json";
-import { recordSchema } from "../src/platform/workspaceRecords";
+import { filmSchema as recordSchema } from "../src/features/journal/model";
 
 test("explicit legacy conversion preserves records and refuses overwrites", () => {
   const folder = mkdtempSync(join(tmpdir(), "workspace-conversion-"));

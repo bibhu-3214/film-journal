@@ -2,9 +2,6 @@ import re
 from datetime import date, datetime
 from math import isfinite
 
-from django.conf import settings
-from django.core.validators import validate_email
-
 
 class Invalid(ValueError):
     pass
@@ -17,118 +14,72 @@ def text(record, key, minimum=0, maximum=200):
     return value
 
 
-def choice(record, key, options):
-    if record.get(key) not in options:
-        raise Invalid(f"Invalid {key}.")
-
-
-def number(record, key, minimum, maximum, integer=False):
-    value = record.get(key)
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not isfinite(value)
-        or not minimum <= value <= maximum
-        or (integer and not isinstance(value, int))
-    ):
-        raise Invalid(f"Invalid {key}.")
-
-
-def validate_phone(record):
-    value = text(record, "phone", 7, 25)
-    if (
-        not re.fullmatch(r"\+?[\d ()-]{7,25}", value)
-        or not 7 <= len(re.sub(r"\D", "", value)) <= 15
-    ):
-        raise Invalid("Invalid phone.")
-
-
 def validate_records(records):
     if not isinstance(records, list) or len(records) > 10000:
-        raise Invalid("A workspace supports up to 10,000 records.")
+        raise Invalid("A journal supports up to 10,000 films.")
+    expected = {
+        "id",
+        "createdAt",
+        "updatedAt",
+        "title",
+        "year",
+        "rating",
+        "genre",
+        "status",
+        "notes",
+    }
     seen = set()
-    kind = settings.PRODUCT["kind"]
-    fields = {
-        "candidate": {"name", "email", "phone", "skills", "jobTitle", "experience", "status"},
-        "note": {"title", "body", "tag", "pinned"},
-        "task": {"title", "description", "priority", "dueDate", "status"},
-        "movie": {"title", "year", "rating", "genre", "status", "notes"},
-        "order": {"name", "phone", "date", "amountMinor"},
-    }[kind]
     for record in records:
-        if not isinstance(record, dict) or set(record) not in (
-            [fields | {"id", "createdAt"}, fields | {"id", "createdAt", "updatedAt"}]
-            if kind == "candidate"
-            else [fields | {"id", "createdAt", "updatedAt"}]
+        if (
+            not isinstance(record, dict)
+            or not expected <= set(record)
+            or set(record) - expected - {"watchedOn"}
         ):
-            raise Invalid("Record fields do not match this application.")
+            raise Invalid("Record fields do not match Film Journal.")
         identity = text(record, "id", 1, 80)
         if identity in seen or not re.fullmatch(r"[A-Za-z0-9_-]+", identity):
-            raise Invalid("Record IDs must be unique and valid.")
+            raise Invalid("Film IDs must be unique and valid.")
         seen.add(identity)
-        for key in ["createdAt"] + (["updatedAt"] if "updatedAt" in record else []):
-            stamp = text(record, key, 1, 40)
+        for key in ["createdAt", "updatedAt"]:
             try:
-                parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
+                value = datetime.fromisoformat(text(record, key, 1, 40).replace("Z", "+00:00"))
+                if value.tzinfo is None:
                     raise ValueError()
             except ValueError as exc:
-                raise Invalid("Record timestamps require an explicit timezone.") from exc
-        if kind == "candidate":
-            text(record, "name", 2, 80)
-            validate_email(text(record, "email", 1, 120))
-            validate_phone(record)
-            text(record, "skills", 2, 250)
-            number(record, "experience", 0, 50)
-            choice(
-                record,
-                "jobTitle",
-                [
-                    "Front-End Developer",
-                    "Node.js Developer",
-                    "MEAN Stack Developer",
-                    "FULL Stack Developer",
-                ],
-            )
-            choice(record, "status", ["applied", "shortlisted", "rejected"])
-        elif kind == "note":
-            text(record, "title", 1, 160)
-            text(record, "body", 1, 20000)
-            text(record, "tag", 0, 40)
-            if not isinstance(record.get("pinned"), bool):
-                raise Invalid("Invalid pinned state.")
-        elif kind == "task":
-            text(record, "title", 1, 200)
-            text(record, "description", 0, 2000)
-            choice(record, "priority", ["Low", "Normal", "High"])
-            choice(record, "status", ["To do", "In progress", "Done"])
-            due = text(record, "dueDate", 0, 10)
-            if due:
+                raise Invalid("Timestamps require an explicit timezone.") from exc
+        text(record, "title", 1, 160)
+        text(record, "notes", 0, 2000)
+        year = record.get("year")
+        if year is not None and (
+            isinstance(year, bool) or not isinstance(year, int) or not 1888 <= year <= 2200
+        ):
+            raise Invalid("Invalid release year.")
+        rating = record.get("rating")
+        if (
+            isinstance(rating, bool)
+            or not isinstance(rating, (int, float))
+            or not isfinite(rating)
+            or not 0 <= rating <= 10
+        ):
+            raise Invalid("Invalid personal rating.")
+        if record.get("genre") not in [
+            "Drama",
+            "Comedy",
+            "Thriller",
+            "Animation",
+            "Documentary",
+            "Other",
+        ] or record.get("status") not in ["Watchlist", "Watched"]:
+            raise Invalid("Invalid film classification.")
+        if "watchedOn" in record:
+            watched = text(record, "watchedOn", 0, 10)
+            if watched:
                 try:
-                    if date.fromisoformat(due).isoformat() != due:
+                    if (
+                        date.fromisoformat(watched).isoformat() != watched
+                        or record["status"] != "Watched"
+                    ):
                         raise ValueError()
                 except ValueError as exc:
-                    raise Invalid("Invalid due date.") from exc
-        elif kind == "movie":
-            text(record, "title", 1, 160)
-            text(record, "notes", 0, 2000)
-            if record.get("year") is not None:
-                number(record, "year", 1888, 2200, True)
-            number(record, "rating", 0, 10)
-            choice(
-                record,
-                "genre",
-                ["Drama", "Comedy", "Thriller", "Animation", "Documentary", "Other"],
-            )
-            choice(record, "status", ["Watchlist", "Watched"])
-        elif kind == "order":
-            text(record, "name", 2, 100)
-            validate_phone(record)
-            number(record, "amountMinor", 1, 100_000_000_000, True)
-            stamp = text(record, "date", 10, 10)
-            try:
-                if date.fromisoformat(stamp).isoformat() != stamp:
-                    raise ValueError()
-            except ValueError as exc:
-                raise Invalid("Invalid order date.") from exc
+                    raise Invalid("Choose a real watched date for a watched film.") from exc
     return records
