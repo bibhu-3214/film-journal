@@ -1,0 +1,11 @@
+{
+  "id": "movies",
+  "kind": "movie",
+  "title": "Movies",
+  "tagline": "Your taste. Your next great watch.",
+  "description": "Keep a personal collection, plan what to watch and remember what made a film worth it.",
+  "eyebrow": "YOUR FILM JOURNAL",
+  "collection": "Movies",
+  "webPort": 5184,
+  "apiPort": 8104
+}
