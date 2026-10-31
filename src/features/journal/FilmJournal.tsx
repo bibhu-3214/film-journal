@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   BookOpen,
@@ -60,6 +60,17 @@ export default function FilmJournal({
       : params.get("view") === "journal"
         ? "journal"
         : "library";
+  const main = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const titles = {
+      library: "Film collection",
+      watchlist: "Watchlist",
+      journal: "My journal",
+    };
+    document.title = `${titles[view]} · ${product.title}`;
+    main.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [view]);
   const [query, setQuery] = useState(""),
     [genre, setGenre] = useState("all"),
     [sort, setSort] = useState("recent");
@@ -222,6 +233,7 @@ export default function FilmJournal({
       </header>
       <main
         id="journal-main"
+        ref={main}
         tabIndex={-1}
         className="mx-auto max-w-7xl px-4 py-7 outline-none sm:px-8 sm:py-10"
       >
@@ -388,10 +400,11 @@ export default function FilmJournal({
             >
               <button
                 type="button"
-                aria-label={"Read " + record.title}
+                title={"Read " + record.title}
                 onClick={() => setReading(record)}
                 className={`relative flex w-full flex-col justify-between bg-linear-to-br ${covers[index % covers.length]} p-6 text-left text-white ${view === "journal" ? "min-h-44" : "aspect-3/4"}`}
               >
+                <span className="sr-only">Read </span>
                 <span className="flex items-center justify-between gap-3 text-[10px] tracking-wider uppercase">
                   <span>{record.genre}</span>
                   <Film size={17} />
