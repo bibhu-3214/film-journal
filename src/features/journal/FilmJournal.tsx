@@ -1,3 +1,12 @@
+import { filmCsv, reviewFilmCsv } from "./csv";
+import { parseListNames } from "./model";
+import DraftNotice from "../../platform/DraftNotice";
+import {
+  useTabDraft,
+  useBeforeUnload,
+  type TabDraft,
+} from "../../platform/useTabDraft";
+import EmptyState from "../../platform/EmptyState";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -53,6 +62,22 @@ export default function FilmJournal({
 }: {
   state: WorkspaceState<FilmRecord>;
 }) {
+  const drafts = useTabDraft(
+    String(state.account.id),
+    [
+      "title",
+      "year",
+      "rating",
+      "genre",
+      "status",
+      "notes",
+      "watchedOn",
+      "lists",
+    ],
+    ["film"],
+  );
+  const [recovered, setRecovered] = useState<TabDraft | null>(null);
+  const editorForm = useRef<HTMLFormElement>(null);
   const [params, setParams] = useSearchParams();
   const view =
     params.get("view") === "watchlist"
@@ -86,13 +111,28 @@ export default function FilmJournal({
     [dark, setDark] = useState(
       () => document.documentElement.dataset.theme === "dark",
     );
+  const csvUpload = useRef<HTMLInputElement>(null);
+  const [csvReview, setCsvReview] = useState<
+    (ReturnType<typeof reviewFilmCsv> & { revision: number }) | null
+  >(null);
+  const [list, setList] = useState("all");
+  const lists = [
+    ...new Set(state.records.flatMap((film) => film.lists || [])),
+  ].sort((a, b) => a.localeCompare(b));
   const upload = useRef<HTMLInputElement>(null),
     summary = journalSummary(state.records);
+  const hasFilters = Boolean(query.trim() || genre !== "all" || list !== "all");
+  const clearFilters = () => {
+    setQuery("");
+    setGenre("all");
+    setList("all");
+  };
   const films = state.records
     .filter(
       (record) =>
         (view === "library" ||
           record.status === (view === "watchlist" ? "Watchlist" : "Watched")) &&
+        (list === "all" || record.lists?.includes(list.slice(5))) &&
         (genre === "all" || record.genre === genre) &&
         (record.title + " " + record.notes)
           .toLowerCase()
@@ -111,10 +151,54 @@ export default function FilmJournal({
     setError("");
   }
   function open(record?: FilmRecord) {
+    if (drafts.draft) {
+      setError(
+        "Recover or discard your unfinished draft before starting another entry.",
+      );
+      return;
+    }
+    setRecovered(null);
     setEditor(record ? { record } : {});
     setStatus(record?.status || "Watchlist");
     setDirty(false);
     setError("");
+  }
+  useBeforeUnload(dirty);
+  function changed() {
+    setDirty(true);
+    // Radix updates its hidden form controls after the value callback.
+    queueMicrotask(() => {
+      if (editorForm.current && editor)
+        drafts.capture(editorForm.current, {
+          kind: "film",
+          ...(editor.record
+            ? {
+                recordId: editor.record.id,
+                base: JSON.stringify(editor.record),
+              }
+            : {}),
+        });
+    });
+  }
+  function recoverDraft() {
+    const draft = drafts.draft;
+    if (!draft) return;
+    let record = draft.recordId
+      ? state.records.find((item) => item.id === draft.recordId)
+      : undefined;
+    const stale = Boolean(
+      draft.recordId && (!record || JSON.stringify(record) !== draft.base),
+    );
+    if (stale) record = undefined;
+    setEditor(record ? { record } : {});
+    setStatus(draft.values.status === "Watched" ? "Watched" : "Watchlist");
+    setRecovered(draft);
+    setDirty(true);
+    setError(
+      stale
+        ? "The original entry changed or was removed. This draft is recovered as a new entry; review it before saving."
+        : "",
+    );
   }
   function close() {
     if (state.busy) return;
@@ -137,6 +221,7 @@ export default function FilmJournal({
     const form = new FormData(event.currentTarget);
     const now = new Date().toISOString();
     try {
+      const listNames = parseListNames(String(form.get("lists") || ""));
       const next = filmSchema.parse({
         ...(editor?.record || { id: crypto.randomUUID(), createdAt: now }),
         updatedAt: now,
@@ -146,6 +231,9 @@ export default function FilmJournal({
         genre: form.get("genre"),
         status,
         notes: form.get("notes"),
+        ...(listNames.length || editor?.record?.lists
+          ? { lists: listNames }
+          : {}),
         watchedOn:
           status === "Watched" ? String(form.get("watchedOn") || "") : "",
       });
@@ -159,6 +247,8 @@ export default function FilmJournal({
           editor?.record ? "Review updated." : "Film added to your collection.",
         )
       ) {
+        drafts.clear();
+        setRecovered(null);
         setEditor(null);
         setDirty(false);
       }
@@ -237,6 +327,10 @@ export default function FilmJournal({
         tabIndex={-1}
         className="mx-auto max-w-7xl px-4 py-7 outline-none sm:px-8 sm:py-10"
       >
+        {drafts.draft && !editor && (
+          <DraftNotice onRestore={recoverDraft} onDiscard={drafts.clear} />
+        )}
+
         <section className="relative overflow-hidden rounded-3xl bg-slate-950 p-7 text-white sm:p-10">
           <div className="pointer-events-none absolute -top-12 -right-10 size-72 rounded-full bg-orange-300/15 blur-3xl" />
           <div className="relative max-w-2xl">
@@ -295,8 +389,41 @@ export default function FilmJournal({
             {error}
           </p>
         )}
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <div className="relative min-w-48 flex-1">
+        <section
+          aria-label="Personal film lists"
+          className="mt-6 flex flex-wrap items-end gap-4 rounded-2xl border border-line bg-surface p-4"
+        >
+          <div className="min-w-48 flex-1">
+            <label
+              htmlFor="film-list"
+              className="mb-2 block text-sm font-medium"
+            >
+              Your lists
+            </label>
+            <Dropdown
+              id="film-list"
+              label="Filter by film list"
+              value={list}
+              options={[
+                { value: "all", label: "All lists" },
+                ...lists.map((name) => ({
+                  value: "list:" + name,
+                  label: `${name} (${state.records.filter((film) => film.lists?.includes(name)).length})`,
+                })),
+              ]}
+              onChange={setList}
+            />
+          </div>
+          <p className="max-w-md text-xs leading-5 text-muted">
+            Create a list by adding its name when you save a movie. A film can
+            belong to several lists.
+          </p>
+        </section>
+        <section
+          aria-label="Library tools"
+          className="mt-8 grid grid-cols-2 items-center gap-3 rounded-2xl border border-line bg-surface p-4 sm:flex sm:flex-wrap"
+        >
+          <div className="relative col-span-2 min-w-0 sm:min-w-48 sm:flex-1">
             <Search
               size={17}
               className="pointer-events-none absolute top-3.5 left-3 text-muted"
@@ -310,7 +437,7 @@ export default function FilmJournal({
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <div className="w-44">
+          <div className="min-w-0 sm:w-44">
             <Dropdown
               label="Film genre"
               value={genre}
@@ -321,7 +448,7 @@ export default function FilmJournal({
               onChange={setGenre}
             />
           </div>
-          <div className="w-44">
+          <div className="min-w-0 sm:w-44">
             <Dropdown
               label="Sort films"
               value={sort}
@@ -349,6 +476,56 @@ export default function FilmJournal({
             <Upload size={15} />
             Import JSON
           </Button>
+          <Button
+            tone="quiet"
+            disabled={state.busy}
+            onClick={() => {
+              const url = URL.createObjectURL(
+                new Blob([filmCsv(state.records)], {
+                  type: "text/csv;charset=utf-8",
+                }),
+              );
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = "film-journal.csv";
+              link.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }}
+          >
+            Export CSV
+          </Button>
+          <Button
+            tone="quiet"
+            disabled={state.busy}
+            onClick={() => csvUpload.current?.click()}
+          >
+            Import CSV
+          </Button>
+          <input
+            ref={csvUpload}
+            type="file"
+            accept=".csv,text/csv"
+            aria-label="Import Film Journal CSV"
+            className="sr-only"
+            onChange={async (event) => {
+              const input = event.currentTarget,
+                file = input.files?.[0];
+              if (!file) return;
+              try {
+                if (file.size > 1_500_000)
+                  throw new Error("Choose a CSV file under 1.5 MB.");
+                setError("");
+                setCsvReview({
+                  ...reviewFilmCsv(await file.text(), state.records),
+                  revision: state.revision,
+                });
+              } catch (failure) {
+                setError(message(failure));
+              } finally {
+                input.value = "";
+              }
+            }}
+          />
           <input
             ref={upload}
             aria-label="Import workspace JSON"
@@ -372,8 +549,8 @@ export default function FilmJournal({
               }
             }}
           />
-        </div>
-        <div className="mt-7 flex items-center justify-between">
+        </section>
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">
             {view === "journal"
               ? "Your film diary"
@@ -514,23 +691,48 @@ export default function FilmJournal({
             </article>
           ))}
           {!films.length && (
-            <div className="rounded-2xl border border-dashed border-line p-10 text-center sm:col-span-2 lg:col-span-3 xl:col-span-4">
-              <Film className="mx-auto mb-5 text-primary" size={30} />
-              <h3 className="text-lg font-semibold">
-                {state.records.length
-                  ? "No films match this view."
-                  : "Your next favourite starts here."}
-              </h3>
-              <p className="mt-3 text-sm leading-7 text-muted">
-                {state.records.length
-                  ? "Try another search or genre."
-                  : "Add a film to your watchlist and make this collection your own."}
-              </p>
-              {!state.records.length && (
-                <Button className="mt-6" onClick={() => open()}>
-                  Add your first movie
+            <div className="sm:col-span-2 lg:col-span-3 xl:col-span-4">
+              <EmptyState
+                icon={Film}
+                level={3}
+                eyebrow="A collection that feels like you"
+                title={
+                  !state.records.length
+                    ? "Your next favourite starts here."
+                    : hasFilters
+                      ? "No films match your filters."
+                      : view === "journal"
+                        ? "Your first journal entry is waiting."
+                        : "Your watchlist is clear."
+                }
+                description={
+                  !state.records.length
+                    ? "Save something you want to watch, then make the story your own with a rating and a few words."
+                    : hasFilters
+                      ? "Clear your search and genre to see the films in this view again."
+                      : view === "journal"
+                        ? "Mark a film from your watchlist as watched to start a journal of the stories that stay with you."
+                        : "Add a film you’re looking forward to, and it will be ready when movie night comes."
+                }
+              >
+                <Button
+                  onClick={() =>
+                    hasFilters
+                      ? clearFilters()
+                      : view === "journal" && state.records.length
+                        ? navigate("watchlist")
+                        : open()
+                  }
+                >
+                  {hasFilters
+                    ? "Clear filters"
+                    : !state.records.length
+                      ? "Add your first movie"
+                      : view === "journal"
+                        ? "View watchlist"
+                        : "Add to watchlist"}
                 </Button>
-              )}
+              </EmptyState>
             </div>
           )}
         </section>
@@ -546,18 +748,28 @@ export default function FilmJournal({
         busy={state.busy}
       >
         <form
+          ref={editorForm}
           key={editor?.record?.id || "new"}
           onSubmit={(event) => void submit(event)}
-          onChange={() => setDirty(true)}
-          onInput={() => setDirty(true)}
+          onChange={changed}
+          onInput={changed}
           className="grid gap-4"
         >
+          {drafts.storageError && (
+            <p role="status" className="text-sm text-danger">
+              {drafts.storageError}
+            </p>
+          )}
+          <p className="text-xs text-muted">
+            Unsaved text is kept in this tab until saved, discarded, or signed
+            out.
+          </p>
           <fieldset disabled={state.busy} className="grid min-w-0 gap-4">
             <label className={field}>
               Movie title
               <Input
                 name="title"
-                defaultValue={editor?.record?.title}
+                defaultValue={recovered?.values.title ?? editor?.record?.title}
                 required
                 maxLength={160}
               />
@@ -568,7 +780,9 @@ export default function FilmJournal({
                 <Input
                   name="year"
                   type="number"
-                  defaultValue={editor?.record?.year ?? ""}
+                  defaultValue={
+                    recovered?.values.year ?? editor?.record?.year ?? ""
+                  }
                   min={1888}
                   max={2200}
                   placeholder="Optional"
@@ -579,7 +793,9 @@ export default function FilmJournal({
                 <Input
                   name="rating"
                   type="number"
-                  defaultValue={editor?.record?.rating ?? 0}
+                  defaultValue={
+                    recovered?.values.rating ?? editor?.record?.rating ?? 0
+                  }
                   required
                   min={0}
                   max={10}
@@ -594,9 +810,12 @@ export default function FilmJournal({
                   id="journal-genre"
                   name="genre"
                   label="Genre"
-                  defaultValue={editor?.record?.genre || "Drama"}
+                  defaultValue={
+                    recovered?.values.genre ??
+                    (editor?.record?.genre || "Drama")
+                  }
                   options={genres.map((value) => ({ value, label: value }))}
-                  onChange={() => setDirty(true)}
+                  onChange={changed}
                 />
               </div>
               <div className={field}>
@@ -612,7 +831,7 @@ export default function FilmJournal({
                   }))}
                   onChange={(value) => {
                     setStatus(value === "Watched" ? "Watched" : "Watchlist");
-                    setDirty(true);
+                    changed();
                   }}
                 />
               </div>
@@ -624,15 +843,33 @@ export default function FilmJournal({
                   id="journal-date"
                   name="watchedOn"
                   label="Watched on"
-                  defaultValue={editor?.record?.watchedOn}
+                  defaultValue={
+                    recovered?.values.watchedOn ?? editor?.record?.watchedOn
+                  }
                 />
               </div>
             )}
             <label className={field}>
+              Lists (comma separated)
+              <Input
+                aria-label="Lists (comma separated)"
+                name="lists"
+                maxLength={500}
+                placeholder="Weekend, Family favourites"
+                defaultValue={
+                  recovered?.values.lists ?? editor?.record?.lists?.join(", ")
+                }
+              />
+              <span className="text-xs font-normal text-muted">
+                Up to 12 names, 40 characters each. Names are created when you
+                save.
+              </span>
+            </label>
+            <label className={field}>
               Your review
               <Textarea
                 name="notes"
-                defaultValue={editor?.record?.notes}
+                defaultValue={recovered?.values.notes ?? editor?.record?.notes}
                 maxLength={2000}
                 className="min-h-40"
                 placeholder="What stayed with you?"
@@ -656,6 +893,60 @@ export default function FilmJournal({
             </Button>
           </div>
         </form>
+      </Modal>
+      <Modal
+        open={csvReview !== null}
+        title="Review CSV import"
+        onClose={() => {
+          if (!state.busy) setCsvReview(null);
+        }}
+        busy={state.busy}
+      >
+        <p className="text-sm text-muted">
+          Add {csvReview?.add.length || 0} films. {csvReview?.duplicates || 0}{" "}
+          duplicate titles/years will be skipped. Existing films are kept.
+        </p>
+        <ul className="mt-4 list-disc pl-5 text-sm">
+          {csvReview?.add.slice(0, 5).map((film) => (
+            <li key={film.id}>{film.title}</li>
+          ))}
+        </ul>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-danger">
+            {error}
+          </p>
+        )}
+        <div className="mt-5 flex justify-end gap-3">
+          <Button
+            tone="quiet"
+            disabled={state.busy}
+            onClick={() => setCsvReview(null)}
+          >
+            Cancel import
+          </Button>
+          <Button
+            disabled={state.busy || !csvReview?.add.length}
+            onClick={async () => {
+              if (!csvReview || state.busy) return;
+              if (csvReview.revision !== state.revision) {
+                setError(
+                  "The collection changed. Preview this file again before importing.",
+                );
+                setCsvReview(null);
+                return;
+              }
+              if (
+                await save(
+                  [...state.records, ...csvReview.add],
+                  "CSV films added.",
+                )
+              )
+                setCsvReview(null);
+            }}
+          >
+            Confirm CSV import
+          </Button>
+        </div>
       </Modal>
       <Modal
         open={reading !== null}
@@ -700,6 +991,8 @@ export default function FilmJournal({
           <Button
             tone="danger"
             onClick={() => {
+              drafts.clear();
+              setRecovered(null);
               setDiscard(false);
               setEditor(null);
               setDirty(false);

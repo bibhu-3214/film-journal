@@ -33,7 +33,7 @@ def validate_records(records):
         if (
             not isinstance(record, dict)
             or not expected <= set(record)
-            or set(record) - expected - {"watchedOn"}
+            or set(record) - expected - {"watchedOn", "lists"}
         ):
             raise Invalid("Record fields do not match Film Journal.")
         identity = text(record, "id", 1, 80)
@@ -71,6 +71,21 @@ def validate_records(records):
             "Other",
         ] or record.get("status") not in ["Watchlist", "Watched"]:
             raise Invalid("Invalid film classification.")
+        if "lists" in record:
+            lists = record["lists"]
+            if not isinstance(lists, list) or len(lists) > 12:
+                raise Invalid("Use up to 12 list names.")
+            seen_lists = set()
+            for name in lists:
+                if (
+                    not isinstance(name, str)
+                    or name != name.strip()
+                    or not 1 <= len(name) <= 40
+                    or re.search(r"[,\r\n]", name)
+                    or name.lower() in seen_lists
+                ):
+                    raise Invalid("Use unique list names of up to 40 characters.")
+                seen_lists.add(name.lower())
         if "watchedOn" in record:
             watched = text(record, "watchedOn", 0, 10)
             if watched:

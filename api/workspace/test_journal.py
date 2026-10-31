@@ -36,3 +36,24 @@ class JournalTests(TestCase):
                 400,
             )
         self.assertEqual(self.client.get("/api/workspace").json()["records"], [record])
+
+    def test_lists_round_trip_and_invalid_memberships_preserve_the_saved_collection(self):
+        record = {**fixture(), "lists": ["Weekend", "Family"]}
+        response = send(self.client, "/api/workspace", {"revision": 0, "records": [record]}, "put")
+        self.assertEqual(response.status_code, 200, response.content)
+        for lists in [
+            ["Weekend", "weekend"],
+            [""],
+            ["x" * 41],
+            "Weekend",
+            ["Comma, name"],
+            ["x"] * 13,
+        ]:
+            response = send(
+                self.client,
+                "/api/workspace",
+                {"revision": 1, "records": [{**record, "lists": lists}]},
+                "put",
+            )
+            self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(self.client.get("/api/workspace").json()["records"], [record])

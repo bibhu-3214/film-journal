@@ -21,6 +21,29 @@ const calendar = z.string().refine((value) => {
     date.getDate() === d
   );
 }, "Choose a real date.");
+export const listNames = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[^,\r\n]+$/),
+  )
+  .max(12)
+  .refine(
+    (names) =>
+      new Set(names.map((name) => name.toLowerCase())).size === names.length,
+    "List names must be unique.",
+  );
+export function parseListNames(value: string): string[] {
+  return listNames.parse(
+    value
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+}
 export const filmSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
@@ -33,6 +56,7 @@ export const filmSchema = z
     status: z.enum(["Watchlist", "Watched"]),
     notes: z.string().max(2000),
     watchedOn: calendar.optional(),
+    lists: listNames.optional(),
   })
   .strict()
   .refine(

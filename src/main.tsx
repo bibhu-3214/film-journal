@@ -1,16 +1,24 @@
-import React from "react";
+import WorkspaceLoading from "./platform/WorkspaceLoading";
+import WorkspaceBoundary from "./platform/WorkspaceBoundary";
+import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import AccountWorkspaceGate from "./platform/AccountWorkspaceGate";
-import FilmJournal from "./features/journal/FilmJournal";
+const FilmJournal = lazy(() => import("./features/journal/FilmJournal"));
 import { filmSchema, type FilmRecord } from "./features/journal/model";
 import "./styles.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <AccountWorkspaceGate<FilmRecord> schema={filmSchema}>
-        {(state) => <FilmJournal state={state} />}
-      </AccountWorkspaceGate>
+      <WorkspaceBoundary>
+        <AccountWorkspaceGate<FilmRecord> schema={filmSchema}>
+          {(state) => (
+            <Suspense fallback={<WorkspaceLoading />}>
+              <FilmJournal state={state} />
+            </Suspense>
+          )}
+        </AccountWorkspaceGate>
+      </WorkspaceBoundary>
     </BrowserRouter>
   </React.StrictMode>,
 );
